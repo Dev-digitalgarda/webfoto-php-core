@@ -3,6 +3,7 @@
 namespace Webfoto\Core\Utils;
 
 use DateTime;
+use DateInterval;
 use Exception;
 
 use Webmozart\PathUtil\Path;
@@ -21,6 +22,7 @@ use Webfoto\Core\Utils\Logger;
 class ImagesHandler
 {
     private string $name;
+    private int $lastDaysToKeep;
     private string $inputPath;
     private string $outputDir;
     private string $outputPath;
@@ -51,9 +53,10 @@ class ImagesHandler
         return $secs === null ? null : new Datetime("@{$secs}");
     }
 
-    function __construct(array $settings, string $outputFotosPath, BaseDatabaseService $db, string $cwd)
+    function __construct(array $settings, string $outputFotosPath, int $lastDaysToKeep, BaseDatabaseService $db, string $cwd)
     {
         $this->name = $settings['name'];
+        $this->lastDaysToKeep = $lastDaysToKeep;
         $this->inputPath = $settings['inputPath'][0] === '/' ? $settings['inputPath'] : Path::join($cwd, $settings['inputPath']);
         $this->driverType = new DriverType($settings['driver']);
         $this->keepEverySeconds = $settings['keepEverySeconds'];
@@ -116,6 +119,21 @@ class ImagesHandler
             }
         }
 
-        Logger::$logger->info('Finished retrieving images', [$this->name]);
+        Logger::$logger->debug('Removing too old images', [$this->name]);
+        $firstAcceptableDay = (new DateTime())
+            ->setTime(0, 0)
+            ->sub(new DateInterval("P{$this->lastDaysToKeep}D"));
+        $images = $this->db->getImages($this->name);
+        foreach ($images as $imageTimestamp) {
+            if ($imageTimestamp < $firstAcceptableDay) {
+                $filename = $imageTimestamp->format('Y-m-d\TH:i:s') . '.jpg';
+                $imagePath = "/{$this->name}/{$filename}";
+                $toRemovePath = Path::join($this->outputPath, $filename);
+                unlink($toRemovePath);
+                $this->db->removeImage($imagePath);
+            }
+        }
+
+        Logger::$logger->info('Finished handling album', [$this->name]);
     }
 }
