@@ -22,5 +22,6 @@ require_once(__DIR__ . '/src/drivers/HikvisionDriver.php');
 
 require_once(__DIR__ . '/src/utils/Logger.php');
 require_once(__DIR__ . '/src/utils/FtpService.php');
+require_once(__DIR__ . '/src/utils/EmailService.php');
 require_once(__DIR__ . '/src/utils/BaseDatabaseService.php');
 require_once(__DIR__ . '/src/utils/ImagesHandler.php');

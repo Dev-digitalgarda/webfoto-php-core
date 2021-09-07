@@ -12,4 +12,6 @@ abstract class BaseDatabaseService {
     public abstract function insertImage(Image $image): void;
     public abstract function getImages(string $name): array;
     public abstract function removeImage(string $path): void;
+    public abstract function updateAlertIfNeeded(string $name): bool;
+    public abstract function resetAlert(string $name): void;
 }

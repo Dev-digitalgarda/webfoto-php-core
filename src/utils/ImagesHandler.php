@@ -17,6 +17,7 @@ use Webfoto\Core\Drivers\HikvisionDriver;
 
 use Webfoto\Core\Utils\BaseDatabaseService;
 use Webfoto\Core\Utils\FtpService;
+use Webfoto\Core\Utils\EmailService;
 use Webfoto\Core\Utils\Logger;
 
 class ImagesHandler
@@ -28,6 +29,8 @@ class ImagesHandler
     private string $outputPath;
     private DriverType $driverType;
     private int $keepEverySeconds;
+    private int $alertThresholdHours;
+    private array $emailOptions;
     private BaseDatabaseService $db;
     private ?FtpService $ftp;
 
@@ -53,40 +56,11 @@ class ImagesHandler
         return $secs === null ? null : new Datetime("@{$secs}");
     }
 
-    function __construct(array $settings, string $outputFotosPath, int $lastDaysToKeep, BaseDatabaseService $db, string $cwd)
+    private function smistImages(array $inputImages, ?DateTime $lastTimestamp): void
     {
-        $this->name = $settings['name'];
-        $this->lastDaysToKeep = $lastDaysToKeep;
-        $this->inputPath = $settings['inputPath'][0] === '/' ? $settings['inputPath'] : Path::join($cwd, $settings['inputPath']);
-        $this->driverType = new DriverType($settings['driver']);
-        $this->keepEverySeconds = $settings['keepEverySeconds'];
-
-        $this->outputDir = $outputFotosPath;
-        $this->outputPath = Path::join($outputFotosPath, $this->name);
-        if (!file_exists($this->outputPath)) {
-            mkdir($this->outputPath, 0777, true);
-        }
-
-        $this->getDriver();
-
-        $this->db = $db;
-
-        $this->ftp = $settings['ftp'] ? new FtpService($settings['ftp']) : null;
-    }
-
-    public function handle(): void
-    {
-        Logger::$logger->info('Handling album images', [$this->name]);
-
-        Logger::$logger->debug('Retrieving images', [$this->name]);
-        $inputImages = $this->driver->analyzeAlbum();
-        Logger::$logger->debug('Retrieving last timestamp', [$this->name]);
-        $lastTimestamp = $this->db->getLastImageDate($this->name);
-
         $toDeleteImages = [];
         $toSaveImages = [];
 
-        Logger::$logger->debug('Smisting images', [$this->name]);
         $currentTimestamp = $this->getNextMinimumTimetamp($lastTimestamp);
         foreach ($inputImages as $image) {
             if ($currentTimestamp === null || $image->timestamp >= $currentTimestamp) {
@@ -118,8 +92,10 @@ class ImagesHandler
                 $this->ftp->uploadImage($filePath);
             }
         }
+    }
 
-        Logger::$logger->debug('Removing too old images', [$this->name]);
+    private function removeTooOldImages(): void
+    {
         $firstAcceptableDay = (new DateTime())
             ->setTime(0, 0)
             ->sub(new DateInterval("P{$this->lastDaysToKeep}D"));
@@ -133,6 +109,66 @@ class ImagesHandler
                 $this->db->removeImage($imagePath);
             }
         }
+    }
+
+    private function sendAlertIfNeeded(): void
+    {
+        $lastTimestamp = $this->db->getLastImageDate($this->name);
+
+        if ($lastTimestamp === null || (new DateTime())->sub(new DateInterval("PT{$this->alertThresholdHours}H")) > $lastTimestamp) {
+            Logger::$logger->debug('Images have not been sent since more than', [$this->alertThresholdHours]);
+            $needed = $this->db->updateAlertIfNeeded($this->name);
+            if ($needed) {
+                Logger::$logger->debug('It is needed to send an alert');
+                EmailService::sendAlertEmail($this->emailOptions, $this->name);
+            }
+        }
+        else {
+            $this->db->resetAlert($this->name);
+        }
+    }
+
+    function __construct(array $settings, string $outputFotosPath, int $lastDaysToKeep, ?int $alertThresholdHours, array $emailOptions, BaseDatabaseService $db, string $cwd)
+    {
+        $this->name = $settings['name'];
+        $this->lastDaysToKeep = $lastDaysToKeep;
+        $this->inputPath = $settings['inputPath'][0] === '/' ? $settings['inputPath'] : Path::join($cwd, $settings['inputPath']);
+        $this->driverType = new DriverType($settings['driver']);
+        $this->keepEverySeconds = $settings['keepEverySeconds'];
+
+        $this->alertThresholdHours = $alertThresholdHours;
+        $this->emailOptions = $emailOptions;
+
+        $this->outputDir = $outputFotosPath;
+        $this->outputPath = Path::join($outputFotosPath, $this->name);
+        if (!file_exists($this->outputPath)) {
+            mkdir($this->outputPath, 0777, true);
+        }
+
+        $this->getDriver();
+
+        $this->db = $db;
+
+        $this->ftp = $settings['ftp'] ? new FtpService($settings['ftp']) : null;
+    }
+
+    public function handle(): void
+    {
+        Logger::$logger->info('Handling album images', [$this->name]);
+
+        Logger::$logger->debug('Retrieving images', [$this->name]);
+        $inputImages = $this->driver->analyzeAlbum();
+        Logger::$logger->debug('Retrieving last timestamp', [$this->name]);
+        $lastTimestamp = $this->db->getLastImageDate($this->name);
+
+        Logger::$logger->debug('Smisting images', [$this->name]);
+        $this->smistImages($inputImages, $lastTimestamp);
+
+        Logger::$logger->debug('Removing too old images', [$this->name]);
+        $this->removeTooOldImages();
+
+        Logger::$logger->debug('Send alert if needed', [$this->name]);
+        $this->sendAlertIfNeeded();
 
         Logger::$logger->info('Finished handling album', [$this->name]);
     }
