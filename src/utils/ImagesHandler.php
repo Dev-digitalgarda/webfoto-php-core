@@ -122,8 +122,7 @@ class ImagesHandler
                 Logger::$logger->debug('It is needed to send an alert');
                 EmailService::sendAlertEmail($this->emailOptions, $this->name);
             }
-        }
-        else {
+        } else {
             $this->db->resetAlert($this->name);
         }
     }
@@ -168,7 +167,9 @@ class ImagesHandler
         $this->removeTooOldImages();
 
         Logger::$logger->debug('Send alert if needed', [$this->name]);
-        $this->sendAlertIfNeeded();
+        if ($this->alertThresholdHours) {
+            $this->sendAlertIfNeeded();
+        }
 
         Logger::$logger->info('Finished handling album', [$this->name]);
     }
